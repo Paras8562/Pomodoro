@@ -37,13 +37,21 @@ fun App(vm: SessionViewModel) {
     SideEffect { view.keepScreenOn = running }   // keep the screen awake while a block runs
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface) {
-        // keep the same margins as when the bars are visible, so nothing sits in the swipe-in zone or jumps when they appear
-        Box(
-            Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBarsIgnoringVisibility.union(WindowInsets.displayCutout)),
-            contentAlignment = Alignment.TopCenter,
-        ) {
-            Box(Modifier.widthIn(max = 480.dp).fillMaxSize().padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 24.dp)) {
-                if (ui.inRun) RunScreen(vm, ui) { sheet = it } else SetupScreen(vm, ui) { sheet = it }
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val landscape = maxWidth > maxHeight
+            // keep the margins the bars would take (so nothing sits in the swipe-in zone); in landscape only the sides + bottom
+            val insets = if (landscape)
+                WindowInsets.systemBarsIgnoringVisibility.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom).union(WindowInsets.displayCutout)
+            else
+                WindowInsets.systemBarsIgnoringVisibility.union(WindowInsets.displayCutout)
+            Box(Modifier.fillMaxSize().windowInsetsPadding(insets), contentAlignment = Alignment.TopCenter) {
+                Box(
+                    Modifier.widthIn(max = if (landscape) 1000.dp else 480.dp).fillMaxSize().padding(
+                        start = 24.dp, end = 24.dp, top = if (landscape) 8.dp else 16.dp, bottom = if (landscape) 12.dp else 24.dp,
+                    )
+                ) {
+                    if (ui.inRun) RunScreen(vm, ui) { sheet = it } else SetupScreen(vm, ui) { sheet = it }
+                }
             }
         }
     }
@@ -119,7 +127,6 @@ fun PlanBar(plan: List<Block>, cur: Int?, modifier: Modifier = Modifier, height:
 
 // ---------------------------------------------------------------- setup flow
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SetupScreen(vm: SessionViewModel, ui: Ui, open: (String) -> Unit) {
     val o = ui.opts
@@ -127,59 +134,89 @@ fun SetupScreen(vm: SessionViewModel, ui: Ui, open: (String) -> Unit) {
     val hasPlan = vm.run.value.plan.isNotEmpty()
     val last = ui.step == 3 || (ui.step == 2 && o.brk == false)
 
-    Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                repeat(3) { i ->
-                    Box(Modifier.weight(1f).height(4.dp).clip(RoundedCornerShape(2.dp))
-                        .background(if (i < ui.step) cs.primary else cs.secondaryContainer))
-                }
-            }
-            TopButtons(open)
-        }
-
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            when (ui.step) {
-                1 -> {
-                    Title("How long will you study?", "Your session runs for this long in total.")
-                    Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(vertical = 8.dp)) {
-                        Text("${o.total / 60}", fontSize = 76.sp, fontWeight = FontWeight.Light)
-                        Text("h", fontSize = 22.sp, color = cs.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, end = 14.dp, bottom = 12.dp))
-                        Text("%02d".format(o.total % 60), fontSize = 76.sp, fontWeight = FontWeight.Light)
-                        Text("m", fontSize = 22.sp, color = cs.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, bottom = 12.dp))
-                    }
-                    Slider(
-                        value = o.total.toFloat(),
-                        onValueChange = { v -> vm.setOpts { it.copy(total = (v / 5).roundToInt() * 5) } },
-                        valueRange = 10f..540f, steps = 105,
-                    )
-                    FlowRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(30, 60, 120, 180, 240).forEach { m ->
-                            FilterChip(selected = o.total == m, onClick = { vm.setOpts { it.copy(total = m) } }, label = { Text(fmt(m)) })
-                        }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val landscape = maxWidth > maxHeight
+        Column(Modifier.fillMaxSize()) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    repeat(3) { i ->
+                        Box(Modifier.weight(1f).height(4.dp).clip(RoundedCornerShape(2.dp))
+                            .background(if (i < ui.step) cs.primary else cs.secondaryContainer))
                     }
                 }
-                2 -> {
-                    Title("Add breaks?", "Total time: ${fmt(o.total)}")
-                    ChoiceCard("No breaks", "One focus timer for the whole session.", o.brk == false) { vm.setOpts { it.copy(brk = false) } }
-                    Spacer(Modifier.height(12.dp))
-                    ChoiceCard("Yes, plan breaks", "Short breaks, and long breaks if you want them. You choose the lengths.", o.brk == true) { vm.setOpts { it.copy(brk = true) } }
-                }
-                else -> PlanStep(vm, o)
+                TopButtons(open)
             }
-        }
 
-        Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            if (ui.step > 1 || hasPlan) TextButton(onClick = vm::back) { Text(if (ui.step > 1) "Back" else "Cancel") } else Spacer(Modifier)
-            Button(onClick = vm::next, enabled = !(ui.step == 2 && o.brk == null)) { Text(if (last) "Create session" else "Next") }
+            if (landscape) {
+                // title + big number on the left, controls on the right, so everything fits without scrolling
+                Row(Modifier.weight(1f).fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(40.dp)) {
+                    Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.CenterStart) {
+                        Column(Modifier.verticalScroll(rememberScrollState())) { StepPart(ui.step, 0, vm, o, true) }
+                    }
+                    Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.CenterStart) {
+                        Column(Modifier.verticalScroll(rememberScrollState())) { StepPart(ui.step, 1, vm, o, true) }
+                    }
+                }
+            } else {
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                    StepPart(ui.step, 0, vm, o, false)
+                    StepPart(ui.step, 1, vm, o, false)
+                }
+            }
+
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                if (ui.step > 1 || hasPlan) TextButton(onClick = vm::back) { Text(if (ui.step > 1) "Back" else "Cancel") } else Spacer(Modifier)
+                Button(onClick = vm::next, enabled = !(ui.step == 2 && o.brk == null)) { Text(if (last) "Create session" else "Next") }
+            }
         }
     }
 }
 
+/** part 0 = heading side, part 1 = controls side. Portrait stacks them; landscape puts them side by side. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun Title(title: String, sub: String) {
-    Text(title, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(top = 20.dp, bottom = 6.dp))
-    Text(sub, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 20.dp))
+fun StepPart(step: Int, part: Int, vm: SessionViewModel, o: Opts, land: Boolean) {
+    val cs = MaterialTheme.colorScheme
+    when (step) {
+        1 -> if (part == 0) {
+            Title("How long will you study?", "Your session runs for this long in total.", land)
+            val big = if (land) 64.sp else 76.sp
+            Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(vertical = 8.dp)) {
+                Text("${o.total / 60}", fontSize = big, fontWeight = FontWeight.Light)
+                Text("h", fontSize = 22.sp, color = cs.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, end = 14.dp, bottom = 12.dp))
+                Text("%02d".format(o.total % 60), fontSize = big, fontWeight = FontWeight.Light)
+                Text("m", fontSize = 22.sp, color = cs.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp, bottom = 12.dp))
+            }
+        } else {
+            Slider(
+                value = o.total.toFloat(),
+                onValueChange = { v -> vm.setOpts { it.copy(total = (v / 5).roundToInt() * 5) } },
+                valueRange = 10f..540f, steps = 105,
+            )
+            FlowRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(30, 60, 120, 180, 240).forEach { m ->
+                    FilterChip(selected = o.total == m, onClick = { vm.setOpts { it.copy(total = m) } }, label = { Text(fmt(m)) })
+                }
+            }
+        }
+        2 -> if (part == 0) {
+            Title("Add breaks?", "Total time: ${fmt(o.total)}", land)
+        } else {
+            ChoiceCard("No breaks", "One focus timer for the whole session.", o.brk == false) { vm.setOpts { it.copy(brk = false) } }
+            Spacer(Modifier.height(12.dp))
+            ChoiceCard("Yes, plan breaks", "Short breaks, and long breaks if you want them. You choose the lengths.", o.brk == true) { vm.setOpts { it.copy(brk = true) } }
+        }
+        else -> if (part == 0) PlanHead(o, land) else PlanBody(vm, o)
+    }
+}
+
+@Composable
+fun Title(title: String, sub: String, land: Boolean = false) {
+    Text(
+        title, style = if (land) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
+        modifier = Modifier.padding(top = if (land) 0.dp else 20.dp, bottom = 6.dp),
+    )
+    Text(sub, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = if (land) 12.dp else 20.dp))
 }
 
 @Composable
@@ -210,12 +247,12 @@ fun SliderRow(label: String, valueText: String, value: Int, min: Int, max: Int, 
 }
 
 @Composable
-fun PlanStep(vm: SessionViewModel, o: Opts) {
+fun PlanHead(o: Opts, land: Boolean) {
     val cs = MaterialTheme.colorScheme
     val p = buildPlan(o, forceBreaks = true)
     val fm = p.filter { it.kind == Kind.FOCUS }
     val bm = p.filter { it.kind != Kind.FOCUS }
-    Title("Plan your session", "Focus and breaks repeat until your study time is filled.")
+    Title("Plan your session", "Focus and breaks repeat until your study time is filled.", land)
 
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(cs.surfaceContainer).padding(16.dp)) {
         PlanBar(p, null, Modifier.fillMaxWidth(), 14.dp)
@@ -230,6 +267,10 @@ fun PlanStep(vm: SessionViewModel, o: Opts) {
         )
     }
     Spacer(Modifier.height(16.dp))
+}
+
+@Composable
+fun PlanBody(vm: SessionViewModel, o: Opts) {
     SliderRow("Focus length", "${o.f} min", o.f, 5, 90, 5) { v -> vm.setOpts { it.copy(f = v) } }
     SliderRow("Short break", "${o.s} min", o.s, 1, 30, 1) { v -> vm.setOpts { it.copy(s = v) } }
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
