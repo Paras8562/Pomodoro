@@ -1,6 +1,13 @@
 package com.example.pomodoro
 
 import android.os.Build
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.ui.graphics.GraphicsLayerScope
+import kotlinx.coroutines.launch
 import android.view.Surface
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -152,34 +159,65 @@ fun RunScreen(vm: SessionViewModel, ui: Ui, open: (String) -> Unit) {
 fun TimerRing(run: Run, b: Block) {
     val cs = MaterialTheme.colorScheme
     val glow = LocalGlow.current
+    val running = run.running
+    val paused = !running && !run.finished && run.remaining < b.ms
+
+    // ---- start / pause feedback: a soft ripple + a small settle, and the time dims while paused ----
+    val pulse = remember { Animatable(1f) }
+    val ripple = remember { Animatable(1f) }          // 1f = finished (invisible)
+    val prev = remember { mutableStateOf(running) }
+    LaunchedEffect(running) {
+        if (running == prev.value) return@LaunchedEffect
+        prev.value = running
+        if (running) {
+            launch { ripple.snapTo(0f); ripple.animateTo(1f, tween(1100, easing = FastOutSlowInEasing)) }
+            pulse.animateTo(1.04f, tween(160, easing = FastOutSlowInEasing))
+            pulse.animateTo(1f, spring(dampingRatio = .45f, stiffness = 260f))
+        } else {
+            pulse.animateTo(.965f, tween(140))
+            pulse.animateTo(1f, spring(dampingRatio = .55f, stiffness = 240f))
+        }
+    }
+    val dim by animateFloatAsState(if (paused) .6f else 1f, tween(500), label = "dim")
+
+    // ---- background glow: calmer, softer, slowly drifting; a little brighter while running ----
+    val glowA by animateFloatAsState(if (running) .6f else .4f, tween(900), label = "glowA")
+    val glowS by animateFloatAsState(if (running) 1.06f else 1f, tween(1400, easing = FastOutSlowInEasing), label = "glowS")
+    val inf = rememberInfiniteTransition(label = "drift")
+    val d1 by inf.animateFloat(-1f, 1f, infiniteRepeatable(tween(11000, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "d1")
+    val d2 by inf.animateFloat(-1f, 1f, infiniteRepeatable(tween(15000, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "d2")
+    val drift: GraphicsLayerScope.() -> Unit = {
+        translationX = d1 * 14.dp.toPx(); translationY = d2 * 12.dp.toPx(); rotationZ = d1 * 5f
+        scaleX = glowS * (1f + .04f * d2); scaleY = glowS * (1f + .03f * d1)
+    }
+
     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         val d = minOf(300.dp, maxWidth * 0.78f, maxHeight * 0.8f)
-
-        // contrasting vertical gradient capsule, blurred, behind the timer
         val w = d * 0.62f
         val h = d * 1.5f
-        val brush = Brush.verticalGradient(listOf(glow.g1, glow.g2))
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val pad = 80.dp
+            val pad = 150.dp   // room for the wide blur so it is never cut off
             Box(
-                Modifier.requiredSize(w + pad * 2, h + pad * 2).blur(36.dp, BlurredEdgeTreatment.Unbounded),
+                Modifier.requiredSize(w + pad * 2, h + pad * 2).graphicsLayer(drift)
+                    .blur(56.dp, BlurredEdgeTreatment.Unbounded),
                 contentAlignment = Alignment.Center,
             ) {
                 Box(
                     Modifier.size(w, h).background(
-                        Brush.verticalGradient(listOf(glow.g1.copy(alpha = .9f), glow.g2.copy(alpha = .9f))),
+                        Brush.verticalGradient(listOf(glow.g1.copy(alpha = glowA), glow.g2.copy(alpha = glowA))),
                         RoundedCornerShape(50),
                     )
                 )
             }
         } else { // older phones: fake the soft edge with stacked translucent capsules
-            Canvas(Modifier.requiredSize(w, h)) {
+            Canvas(Modifier.requiredSize(w, h).graphicsLayer(drift)) {
                 for (i in 8 downTo 0) {
-                    val e = (i * 4).dp.toPx()
+                    val e = (i * 5).dp.toPx()
                     drawRoundRect(
                         brush = Brush.verticalGradient(listOf(glow.g1, glow.g2), startY = -e, endY = size.height + e),
                         topLeft = Offset(-e, -e), size = Size(size.width + 2 * e, size.height + 2 * e),
-                        cornerRadius = CornerRadius((size.width + 2 * e) / 2), alpha = .11f,
+                        cornerRadius = CornerRadius((size.width + 2 * e) / 2), alpha = .08f * (glowA / .6f),
                     )
                 }
             }
@@ -187,20 +225,24 @@ fun TimerRing(run: Run, b: Block) {
 
         val progress by animateFloatAsState(
             targetValue = (run.remaining / b.ms.toFloat()).coerceIn(0f, 1f),
-            animationSpec = if (run.running) tween(250, easing = LinearEasing) else tween(500, easing = FastOutSlowInEasing),
+            animationSpec = if (running) tween(250, easing = LinearEasing) else tween(500, easing = FastOutSlowInEasing),
             label = "progress",
         )
-        Box(Modifier.size(d), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(d).graphicsLayer { scaleX = pulse.value; scaleY = pulse.value }, contentAlignment = Alignment.Center) {
             Canvas(Modifier.fillMaxSize()) {
                 val sw = 14.dp.toPx()
                 val tl = Offset(sw / 2, sw / 2)
                 val sz = Size(size.width - sw, size.height - sw)
                 drawArc(cs.secondaryContainer, 0f, 360f, false, tl, sz, style = Stroke(sw))
                 if (progress > .004f) {
-                    drawArc(cs.primary, -90f, 360f * progress, false, tl, sz, style = Stroke(sw, cap = StrokeCap.Round))
+                    drawArc(cs.primary.copy(alpha = dim), -90f, 360f * progress, false, tl, sz, style = Stroke(sw, cap = StrokeCap.Round))
+                }
+                val rp = ripple.value
+                if (rp < 1f) {
+                    drawCircle(cs.primary.copy(alpha = (1f - rp) * .35f), radius = (size.width - sw) / 2f * (1f + .3f * rp), style = Stroke(3.dp.toPx()))
                 }
             }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(Modifier.graphicsLayer { alpha = dim }, horizontalAlignment = Alignment.CenterHorizontally) {
                 TimeText(run.remaining)
                 Crossfade(
                     targetState = if (run.finished) "All done" else when (b.kind) {
