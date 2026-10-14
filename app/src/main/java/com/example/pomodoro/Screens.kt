@@ -36,7 +36,11 @@ fun App(vm: SessionViewModel) {
     SideEffect { view.keepScreenOn = running }   // keep the screen awake while a block runs
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface) {
-        Box(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.TopCenter) {
+        // keep the same margins as when the bars are visible, so nothing sits in the swipe-in zone or jumps when they appear
+        Box(
+            Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBarsIgnoringVisibility.union(WindowInsets.displayCutout)),
+            contentAlignment = Alignment.TopCenter,
+        ) {
             Box(Modifier.widthIn(max = 480.dp).fillMaxSize().padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 24.dp)) {
                 if (ui.inRun) RunScreen(vm, ui) { sheet = it } else SetupScreen(vm, ui) { sheet = it }
             }
@@ -77,26 +81,40 @@ fun kindColor(k: Kind) = when (k) {
     Kind.LONG -> LocalGlow.current.g2
 }
 
-/** Whole-session bar. [cur] = index of the running block (null = plain preview). */
 @Composable
-fun PlanBar(plan: List<Block>, cur: Int?, modifier: Modifier = Modifier, height: Dp = 12.dp) {
-    Row(modifier.height(height), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
-        plan.forEachIndexed { i, b ->
-            val todo = cur != null && i > cur
-            val now = cur != null && i == cur
-            val a by animateFloatAsState(if (todo) .3f else 1f, tween(300), label = "a")
-            val s by animateFloatAsState(if (now) 1.6f else 1f, tween(300), label = "s")
-            Box(
-                Modifier.weight(b.mins.toFloat()).fillMaxHeight()
-                    .graphicsLayerAlphaScale(a, s)
-                    .background(kindColor(b.kind), RoundedCornerShape(50))
-            )
+private fun segAnim(i: Int, cur: Int?): Pair<State<Float>, State<Float>> {
+    val alpha = animateFloatAsState(if (cur != null && i > cur) .3f else 1f, tween(300), label = "a")
+    val scale = animateFloatAsState(if (cur != null && i == cur) 1.6f else 1f, tween(300), label = "s")
+    return alpha to scale
+}
+
+/** Whole-session bar. [cur] = index of the running block (null = plain preview). [height] is the bar's thickness. */
+@Composable
+fun PlanBar(plan: List<Block>, cur: Int?, modifier: Modifier = Modifier, height: Dp = 12.dp, vertical: Boolean = false) {
+    if (vertical) {
+        Column(modifier.width(height), verticalArrangement = Arrangement.spacedBy(2.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            plan.forEachIndexed { i, b ->
+                val (a, sc) = segAnim(i, cur)
+                Box(
+                    Modifier.weight(b.mins.toFloat()).fillMaxWidth()
+                        .graphicsLayer { alpha = a.value; scaleX = sc.value }
+                        .background(kindColor(b.kind), RoundedCornerShape(50))
+                )
+            }
+        }
+    } else {
+        Row(modifier.height(height), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+            plan.forEachIndexed { i, b ->
+                val (a, sc) = segAnim(i, cur)
+                Box(
+                    Modifier.weight(b.mins.toFloat()).fillMaxHeight()
+                        .graphicsLayer { alpha = a.value; scaleY = sc.value }
+                        .background(kindColor(b.kind), RoundedCornerShape(50))
+                )
+            }
         }
     }
 }
-
-fun Modifier.graphicsLayerAlphaScale(alpha: Float, scaleY: Float) =
-    graphicsLayer { this.alpha = alpha; this.scaleY = scaleY }
 
 // ---------------------------------------------------------------- setup flow
 

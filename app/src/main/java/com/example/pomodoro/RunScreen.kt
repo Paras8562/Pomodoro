@@ -1,6 +1,15 @@
 package com.example.pomodoro
 
 import android.os.Build
+import android.view.Surface
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.Dp
+import kotlinx.coroutines.delay
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -46,44 +55,96 @@ import kotlin.math.ceil
 import kotlin.math.max
 
 @Composable
+fun Actions(open: (String) -> Unit, vm: SessionViewModel) {
+    TopButtons(open)
+    SmallIconButton(Icons.Rounded.Tune, "New session") { vm.openSetup() }
+}
+
+/** "Focus · 30m left", or the session-complete card. */
+@Composable
+fun Status(run: Run, b: Block, vm: SessionViewModel, bottom: Dp) {
+    val cs = MaterialTheme.colorScheme
+    if (run.finished) {
+        val focus = run.plan.filter { it.kind == Kind.FOCUS }.sumOf { it.mins }
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(bottom = bottom)) {
+            Text("Session complete", style = MaterialTheme.typography.titleLarge)
+            Text("You focused for ${fmt(focus)}.", color = cs.onSurfaceVariant)
+            Button(onClick = vm::openSetup) { Text("New session") }
+        }
+    } else {
+        val fc = run.plan.count { it.kind == Kind.FOCUS }
+        val fi = run.plan.take(run.idx + 1).count { it.kind == Kind.FOCUS }
+        val label = when (b.kind) {
+            Kind.FOCUS -> if (fc > 1) "Focus $fi of $fc" else "Focus"
+            Kind.SHORT -> "Short break"
+            Kind.LONG -> "Long break"
+        }
+        val later = run.plan.drop(run.idx + 1).sumOf { it.ms }
+        val leftMin = max(1, ceil((run.remaining + later) / 60000.0).toInt())
+        Text("$label · ${fmt(leftMin)} left", fontSize = 14.sp, color = cs.onSurfaceVariant, modifier = Modifier.padding(bottom = bottom))
+    }
+}
+
+@Composable
 fun RunScreen(vm: SessionViewModel, ui: Ui, open: (String) -> Unit) {
     val run by vm.run.collectAsStateWithLifecycle()
     val b = run.plan.getOrNull(run.idx) ?: return
-    val cs = MaterialTheme.colorScheme
 
-    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            PlanBar(run.plan, if (run.finished) run.plan.size else run.idx, Modifier.weight(1f))
-            TopButtons(open)
-            SmallIconButton(Icons.Rounded.Tune, "New session") { vm.openSetup() }
-        }
+    // While a focus block runs, the buttons fade away after 4 s; any tap brings them back.
+    var visible by remember { mutableStateOf(true) }
+    var touch by remember { mutableIntStateOf(0) }
+    val focusRunning = run.running && b.kind == Kind.FOCUS && !run.finished
+    LaunchedEffect(focusRunning, touch) { if (focusRunning) { delay(4000); visible = false } else visible = true }
+    val a by animateFloatAsState(if (visible) 1f else 0f, tween(if (visible) 350 else 700), label = "chrome")
+    val fade = Modifier.graphicsLayer { alpha = a; scaleX = .94f + .06f * a; scaleY = .94f + .06f * a }
 
-        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            TimerRing(run, b)
-        }
+    val rotation = LocalView.current.display?.rotation ?: Surface.ROTATION_90
+    val cur = if (run.finished) run.plan.size else run.idx
 
-        if (run.finished) {
-            val focus = run.plan.filter { it.kind == Kind.FOCUS }.sumOf { it.mins }
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(bottom = 24.dp)) {
-                Text("Session complete", style = MaterialTheme.typography.titleLarge)
-                Text("You focused for ${fmt(focus)}.", color = cs.onSurfaceVariant)
-                Spacer(Modifier.height(6.dp))
-                Button(onClick = vm::openSetup) { Text("New session") }
+    BoxWithConstraints(
+        Modifier.fillMaxSize().pointerInput(Unit) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false); touch++ } }
+    ) {
+        if (maxWidth <= maxHeight) {
+            // ---------- portrait ----------
+            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Row(Modifier.fillMaxWidth().then(fade), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    PlanBar(run.plan, cur, Modifier.weight(1f))
+                    Actions(open, vm)
+                }
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { TimerRing(run, b) }
+                Status(run, b, vm, 24.dp)
+                if (!run.finished) {
+                    Box(fade) { Controls(run.running, vm, vertical = false) }
+                    Spacer(Modifier.height(8.dp))
+                }
             }
         } else {
-            val fc = run.plan.count { it.kind == Kind.FOCUS }
-            val fi = run.plan.take(run.idx + 1).count { it.kind == Kind.FOCUS }
-            val label = when (b.kind) {
-                Kind.FOCUS -> if (fc > 1) "Focus $fi of $fc" else "Focus"
-                Kind.SHORT -> "Short break"
-                Kind.LONG -> "Long break"
+            // ---------- landscape: the same pieces, turned onto the sides; the timer stays centred ----------
+            val topFirst = rotation != Surface.ROTATION_270   // phone turned clockwise: swap sides
+            val topGroup: @Composable () -> Unit = {
+                Column(Modifier.fillMaxHeight().then(fade), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Actions(open, vm)
+                    PlanBar(run.plan, cur, Modifier.weight(1f), vertical = true)
+                }
             }
-            val later = run.plan.drop(run.idx + 1).sumOf { it.ms }
-            val leftMin = max(1, ceil((run.remaining + later) / 60000.0).toInt())
-            Text("$label · ${fmt(leftMin)} left", fontSize = 14.sp, color = cs.onSurfaceVariant, modifier = Modifier.padding(bottom = 24.dp))
-            Controls(run.running, vm)
-            Spacer(Modifier.height(8.dp))
+            val controlGroup: @Composable () -> Unit = {
+                if (!run.finished) {
+                    Column(Modifier.fillMaxHeight().then(fade), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        Controls(run.running, vm, vertical = true)
+                    }
+                } else Spacer(Modifier.width(40.dp))
+            }
+            Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (topFirst) topGroup() else controlGroup()
+                Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { TimerRing(run, b) }
+                    Status(run, b, vm, 4.dp)
+                }
+                if (topFirst) controlGroup() else topGroup()
+            }
         }
+        // while the buttons are hidden, the first tap only brings them back
+        if (!visible) Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { visible = true; touch++ } })
     }
 }
 
@@ -179,19 +240,28 @@ fun TimeText(ms: Long) {
 }
 
 @Composable
-fun Controls(running: Boolean, vm: SessionViewModel) {
+fun Controls(running: Boolean, vm: SessionViewModel, vertical: Boolean) {
     // Play button morphs from a pill to a squarer shape while running.
     val corner by animateDpAsState(if (running) 28.dp else 44.dp, spring(dampingRatio = .7f, stiffness = 400f), label = "corner")
-    Row(
-        Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    val content: @Composable () -> Unit = {
         FilledTonalIconButton(onClick = vm::reset, modifier = Modifier.size(64.dp), colors = tintedButtonColors()) { Icon(Icons.Rounded.Refresh, "Restart block") }
-        FilledIconButton(onClick = vm::toggle, modifier = Modifier.size(120.dp, 88.dp), shape = RoundedCornerShape(corner)) {
+        FilledIconButton(
+            onClick = vm::toggle,
+            modifier = if (vertical) Modifier.size(88.dp, 120.dp) else Modifier.size(120.dp, 88.dp),
+            shape = RoundedCornerShape(corner),
+        ) {
             Crossfade(running, label = "playPause") {
                 Icon(if (it) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (it) "Pause" else "Start", Modifier.size(40.dp))
             }
         }
         FilledTonalIconButton(onClick = vm::skip, modifier = Modifier.size(64.dp), colors = tintedButtonColors()) { Icon(Icons.Rounded.SkipNext, "Next block") }
+    }
+    if (vertical) {
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp), horizontalAlignment = Alignment.CenterHorizontally) { content() }
+    } else {
+        Row(
+            Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+        ) { content() }
     }
 }
