@@ -50,9 +50,16 @@ fun App(vm: SessionViewModel) {
 
 // ---------------------------------------------------------------- shared bits
 
+/** Translucent accent-tinted buttons: a soft wash of the theme colour with an accent-coloured icon. */
+@Composable
+fun tintedButtonColors() = IconButtonDefaults.filledTonalIconButtonColors(
+    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = .16f),
+    contentColor = MaterialTheme.colorScheme.primary,
+)
+
 @Composable
 fun SmallIconButton(icon: androidx.compose.ui.graphics.vector.ImageVector, desc: String, onClick: () -> Unit) {
-    FilledTonalIconButton(onClick = onClick, modifier = Modifier.size(40.dp)) {
+    FilledTonalIconButton(onClick = onClick, modifier = Modifier.size(40.dp), colors = tintedButtonColors()) {
         Icon(icon, contentDescription = desc, modifier = Modifier.size(22.dp))
     }
 }

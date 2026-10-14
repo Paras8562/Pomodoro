@@ -99,11 +99,18 @@ fun TimerRing(run: Run, b: Block) {
         val h = d * 1.5f
         val brush = Brush.verticalGradient(listOf(glow.g1, glow.g2))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val pad = 80.dp
             Box(
-                Modifier.requiredSize(w, h).alpha(.85f)
-                    .blur(32.dp, BlurredEdgeTreatment.Unbounded)
-                    .background(brush, RoundedCornerShape(50))
-            )
+                Modifier.requiredSize(w + pad * 2, h + pad * 2).blur(36.dp, BlurredEdgeTreatment.Unbounded),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    Modifier.size(w, h).background(
+                        Brush.verticalGradient(listOf(glow.g1.copy(alpha = .9f), glow.g2.copy(alpha = .9f))),
+                        RoundedCornerShape(50),
+                    )
+                )
+            }
         } else { // older phones: fake the soft edge with stacked translucent capsules
             Canvas(Modifier.requiredSize(w, h)) {
                 for (i in 8 downTo 0) {
@@ -179,12 +186,12 @@ fun Controls(running: Boolean, vm: SessionViewModel) {
         Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        FilledTonalIconButton(onClick = vm::reset, modifier = Modifier.size(64.dp)) { Icon(Icons.Rounded.Refresh, "Restart block") }
+        FilledTonalIconButton(onClick = vm::reset, modifier = Modifier.size(64.dp), colors = tintedButtonColors()) { Icon(Icons.Rounded.Refresh, "Restart block") }
         FilledIconButton(onClick = vm::toggle, modifier = Modifier.size(120.dp, 88.dp), shape = RoundedCornerShape(corner)) {
             Crossfade(running, label = "playPause") {
                 Icon(if (it) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (it) "Pause" else "Start", Modifier.size(40.dp))
             }
         }
-        FilledTonalIconButton(onClick = vm::skip, modifier = Modifier.size(64.dp)) { Icon(Icons.Rounded.SkipNext, "Next block") }
+        FilledTonalIconButton(onClick = vm::skip, modifier = Modifier.size(64.dp), colors = tintedButtonColors()) { Icon(Icons.Rounded.SkipNext, "Next block") }
     }
 }
