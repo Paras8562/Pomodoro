@@ -26,6 +26,7 @@ import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.roundToInt
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun App(vm: SessionViewModel) {
     val ui by vm.ui.collectAsStateWithLifecycle()
