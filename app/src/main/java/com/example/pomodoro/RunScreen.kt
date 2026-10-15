@@ -147,7 +147,7 @@ fun RunScreen(vm: SessionViewModel, ui: Ui, open: (String) -> Unit) {
             val barFirst = rotation != Surface.ROTATION_270   // phone turned clockwise: swap sides
             val barGroup: @Composable () -> Unit = {
                 Column(Modifier.fillMaxHeight().width(96.dp).then(fade), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                    PlanBar(run.plan, cur, Modifier.fillMaxHeight(.62f), vertical = true, gap = 6.dp, breakColor = cs.secondaryContainer)
+                    PlanBar(run.plan, cur, Modifier.fillMaxHeight(.72f), vertical = true, gap = 6.dp, breakColor = cs.secondaryContainer)
                 }
             }
             val controlGroup: @Composable () -> Unit = {

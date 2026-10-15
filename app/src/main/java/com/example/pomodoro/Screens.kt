@@ -143,36 +143,42 @@ private fun segAnim(i: Int, cur: Int?): Pair<State<Float>, State<Float>> {
 /**
  * Whole-session bar. [cur] = index of the running block (null = plain preview). [height] is the bar's thickness.
  * If [breakColor] is set, both kinds of break use it (the calm look of the timer screen).
+ * The gaps shrink when there are many blocks (e.g. a 9-hour session), so the bar never collapses to nothing.
  */
 @Composable
 fun PlanBar(
     plan: List<Block>, cur: Int?, modifier: Modifier = Modifier, height: Dp = 12.dp,
     vertical: Boolean = false, gap: Dp = 2.dp, breakColor: Color? = null,
 ) {
-    if (vertical) {
-        Column(modifier.width(height), verticalArrangement = Arrangement.spacedBy(gap), horizontalAlignment = Alignment.CenterHorizontally) {
-            plan.forEachIndexed { i, b ->
-                val (a, sc) = segAnim(i, cur)
-                val flat = breakColor != null && b.kind != Kind.FOCUS
-                val col = if (breakColor != null && b.kind != Kind.FOCUS) breakColor else kindColor(b.kind)
-                Box(
-                    Modifier.weight(b.mins.toFloat()).fillMaxWidth()
-                        .graphicsLayer { alpha = if (flat) 1f else a.value; scaleX = sc.value }
-                        .background(col, RoundedCornerShape(50))
-                )
+    BoxWithConstraints(modifier.then(if (vertical) Modifier.width(height) else Modifier.height(height))) {
+        val len = if (vertical) maxHeight else maxWidth
+        val g = if (plan.size > 1) minOf(gap, len * 0.25f / (plan.size - 1)) else gap
+        @Composable
+        fun colorOf(b: Block) = if (breakColor != null && b.kind != Kind.FOCUS) breakColor else kindColor(b.kind)
+
+        if (vertical) {
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(g), horizontalAlignment = Alignment.CenterHorizontally) {
+                plan.forEachIndexed { i, b ->
+                    val (a, sc) = segAnim(i, cur)
+                    val flat = breakColor != null && b.kind != Kind.FOCUS
+                    Box(
+                        Modifier.weight(b.mins.toFloat()).fillMaxWidth()
+                            .graphicsLayer { alpha = if (flat) 1f else a.value; scaleX = sc.value }
+                            .background(colorOf(b), RoundedCornerShape(50))
+                    )
+                }
             }
-        }
-    } else {
-        Row(modifier.height(height), horizontalArrangement = Arrangement.spacedBy(gap), verticalAlignment = Alignment.CenterVertically) {
-            plan.forEachIndexed { i, b ->
-                val (a, sc) = segAnim(i, cur)
-                val flat = breakColor != null && b.kind != Kind.FOCUS
-                val col = if (breakColor != null && b.kind != Kind.FOCUS) breakColor else kindColor(b.kind)
-                Box(
-                    Modifier.weight(b.mins.toFloat()).fillMaxHeight()
-                        .graphicsLayer { alpha = if (flat) 1f else a.value; scaleY = sc.value }
-                        .background(col, RoundedCornerShape(50))
-                )
+        } else {
+            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(g), verticalAlignment = Alignment.CenterVertically) {
+                plan.forEachIndexed { i, b ->
+                    val (a, sc) = segAnim(i, cur)
+                    val flat = breakColor != null && b.kind != Kind.FOCUS
+                    Box(
+                        Modifier.weight(b.mins.toFloat()).fillMaxHeight()
+                            .graphicsLayer { alpha = if (flat) 1f else a.value; scaleY = sc.value }
+                            .background(colorOf(b), RoundedCornerShape(50))
+                    )
+                }
             }
         }
     }
