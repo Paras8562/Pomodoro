@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
+import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
@@ -34,6 +35,10 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _ui = MutableStateFlow(load())
     val ui: StateFlow<Ui> = _ui.asStateFlow()
+
+    /** The swipe-gesture hint is shown until the first run screen has been up for a few seconds. */
+    val hintSeen = mutableStateOf(sp.getBoolean("hintSeen", false))
+    fun hintDone() { hintSeen.value = true; sp.edit().putBoolean("hintSeen", true).apply() }
 
     private var job: Job? = null
     private var endAt = 0L

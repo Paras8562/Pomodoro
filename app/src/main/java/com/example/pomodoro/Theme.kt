@@ -44,6 +44,6 @@ fun PomodoroTheme(look: Look, content: @Composable () -> Unit) {
         glow = Glow(hex(v[9]), hex(v[10]))
     }
     CompositionLocalProvider(LocalGlow provides glow) {
-        MaterialTheme(colorScheme = scheme, content = content)
+        MaterialTheme(colorScheme = scheme, typography = PomodoroTypography, content = content)
     }
 }
