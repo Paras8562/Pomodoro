@@ -1,6 +1,16 @@
 package com.example.pomodoro
 
+import android.Manifest
 import android.app.Application
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.PowerManager
+import androidx.core.content.ContextCompat
 import android.content.Context
 import android.os.SystemClock
 import android.os.VibrationEffect
@@ -36,9 +46,58 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
     private val _ui = MutableStateFlow(load())
     val ui: StateFlow<Ui> = _ui.asStateFlow()
 
-    /** The swipe-gesture hint is shown until the first run screen has been up for a few seconds. */
-    val hintSeen = mutableStateOf(sp.getBoolean("hintSeen", false))
-    fun hintDone() { hintSeen.value = true; sp.edit().putBoolean("hintSeen", true).apply() }
+    // ---------- swipe hint: shown the first 3 times the timer screen opens ----------
+    val hintVisible = mutableStateOf(false)
+    private var hintCount = sp.getInt("hintCount", 0)
+    fun maybeShowHint() {
+        if (hintCount < 3 && !hintVisible.value) {
+            hintVisible.value = true
+            hintCount++
+            sp.edit().putInt("hintCount", hintCount).apply()
+        }
+    }
+    fun hideHint() { hintVisible.value = false }
+
+    // ---------- "Get back to work" nudge when the app is left during a focus block ----------
+    private var nudgeJob: Job? = null
+    private val nm get() = getApplication<Application>().getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+    fun appLeft() {
+        nudgeJob?.cancel()
+        // a short delay, so a screen rotation (which stops and restarts the app) never flashes a notification
+        nudgeJob = viewModelScope.launch { delay(1500); postNudge() }
+    }
+
+    fun appBack() { nudgeJob?.cancel(); nm.cancel(NUDGE_ID) }
+
+    private fun postNudge() {
+        val app = getApplication<Application>()
+        val r = _run.value
+        val b = r.plan.getOrNull(r.idx) ?: return
+        if (!r.running || r.finished || b.kind != Kind.FOCUS) return
+        val pm = app.getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (!pm.isInteractive) return   // the screen turned off; the person didn't walk away
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(app, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) return
+        nm.createNotificationChannel(
+            NotificationChannel("nudge", "Focus reminders", NotificationManager.IMPORTANCE_HIGH)
+                .apply { description = "Reminds you to come back while a focus timer is running" }
+        )
+        val left = ceil(r.remaining / 1000.0).toLong()
+        val open = PendingIntent.getActivity(
+            app, 0,
+            Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val n = Notification.Builder(app, "nudge")
+            .setSmallIcon(R.drawable.ic_stat_timer)
+            .setContentTitle("Get back to work")
+            .setContentText(String.format("Your focus timer is still running – %d:%02d left.", left / 60, left % 60))
+            .setContentIntent(open).setAutoCancel(true).setCategory(Notification.CATEGORY_REMINDER)
+            .build()
+        nm.notify(NUDGE_ID, n)
+    }
 
     private var job: Job? = null
     private var endAt = 0L
@@ -198,4 +257,6 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
             v.vibrate(VibrationEffect.createWaveform(pattern, -1))
         } catch (_: Exception) {}
     }
+
+    private companion object { const val NUDGE_ID = 1 }
 }

@@ -1,6 +1,19 @@
 package com.example.pomodoro
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Palette
@@ -32,22 +45,52 @@ fun App(vm: SessionViewModel) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val running by vm.running.collectAsStateWithLifecycle()
     var sheet by remember { mutableStateOf<String?>(null) }
+    val ctx = LocalContext.current
+    val density = LocalDensity.current
+    val dir = LocalLayoutDirection.current
 
     val view = LocalView.current
     SideEffect { view.keepScreenOn = running }   // keep the screen awake while a block runs
 
+    // "Get back to work" reminder when you leave the app during a focus block (Android 13+ asks for permission once)
+    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    var asked by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(running) {
+        if (running && !asked && Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            asked = true
+            permLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { vm.appLeft() }
+    LifecycleEventEffect(Lifecycle.Event.ON_START) { vm.appBack() }
+
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val landscape = maxWidth > maxHeight
-            // keep the margins the bars would take (so nothing sits in the swipe-in zone); in landscape only the sides + bottom
-            val insets = if (landscape)
-                WindowInsets.systemBarsIgnoringVisibility.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom).union(WindowInsets.displayCutout)
-            else
-                WindowInsets.systemBarsIgnoringVisibility.union(WindowInsets.displayCutout)
-            Box(Modifier.fillMaxSize().windowInsetsPadding(insets), contentAlignment = Alignment.TopCenter) {
+            // The margins the bars would take (so nothing sits in the swipe-in zone).
+            // On the timer screen in landscape they are made equal on both sides, so the timer sits exactly in the
+            // middle of the screen; changes between screens glide instead of jumping.
+            val base = WindowInsets.systemBarsIgnoringVisibility.union(WindowInsets.displayCutout)
+            val l = base.getLeft(density, dir)
+            val r = base.getRight(density, dir)
+            val t = base.getTop(density)
+            val bt = base.getBottom(density)
+            val sym = landscape && ui.inRun
+            val side = max(l, r)
+            val vert = max(t, bt)
+            val glide = tween<Dp>(450)
+            val padL by animateDpAsState(with(density) { (if (sym) side else l).toDp() }, glide, label = "padL")
+            val padR by animateDpAsState(with(density) { (if (sym) side else r).toDp() }, glide, label = "padR")
+            val padT by animateDpAsState(with(density) { (if (sym) vert else if (landscape) 0 else t).toDp() }, glide, label = "padT")
+            val padB by animateDpAsState(with(density) { (if (sym) vert else bt).toDp() }, glide, label = "padB")
+            Box(Modifier.fillMaxSize().padding(start = padL, end = padR, top = padT, bottom = padB), contentAlignment = Alignment.TopCenter) {
                 Box(
                     Modifier.widthIn(max = if (landscape) 1000.dp else 480.dp).fillMaxSize().padding(
-                        start = 24.dp, end = 24.dp, top = if (landscape) 8.dp else 16.dp, bottom = if (landscape) 12.dp else 24.dp,
+                        start = 24.dp, end = 24.dp,
+                        top = if (sym) 10.dp else if (landscape) 8.dp else 16.dp,
+                        bottom = if (sym) 10.dp else if (landscape) 12.dp else 24.dp,
                     )
                 ) {
                     if (ui.inRun) RunScreen(vm, ui) { sheet = it } else SetupScreen(vm, ui) { sheet = it }
@@ -189,7 +232,7 @@ fun StepPart(step: Int, part: Int, vm: SessionViewModel, o: Opts, land: Boolean)
     val cs = MaterialTheme.colorScheme
     when (step) {
         1 -> if (part == 0) {
-            Title("How long will you study?", "Your session runs for this long in total.", land)
+            Title("How long will you work?", "Your session runs for this long in total.", land)
             val big = if (land) 64.sp else 76.sp
             Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(vertical = 8.dp)) {
                 Text("${o.total / 60}", fontSize = big, fontWeight = FontWeight.Light)
@@ -262,7 +305,7 @@ fun PlanHead(o: Opts, land: Boolean) {
     val p = buildPlan(o, forceBreaks = true)
     val fm = p.filter { it.kind == Kind.FOCUS }
     val bm = p.filter { it.kind != Kind.FOCUS }
-    Title("Plan your session", "Focus and breaks repeat until your study time is filled.", land)
+    Title("Plan your session", "Focus and breaks repeat until your work time is filled.", land)
 
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(cs.surfaceContainer).padding(16.dp)) {
         PlanBar(p, null, Modifier.fillMaxWidth(), 14.dp)

@@ -16,7 +16,7 @@ data class Opts(
 data class Look(val mode: String = "system", val pal: String = "you")
 data class Snd(val tick: String = "soft", val cues: Boolean = true, val vol: Int = 70)
 
-/** Fills the study time with focus blocks and breaks; a long break follows every Nth focus block. */
+/** Fills the work time with focus blocks and breaks; a long break follows every Nth focus block. */
 fun buildPlan(o: Opts, forceBreaks: Boolean = false): List<Block> {
     if (o.brk != true && !forceBreaks) return listOf(Block(Kind.FOCUS, o.total))
     val p = mutableListOf<Block>()

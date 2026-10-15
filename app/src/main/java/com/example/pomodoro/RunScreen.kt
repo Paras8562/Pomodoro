@@ -3,6 +3,9 @@ package com.example.pomodoro
 import android.os.Build
 import android.view.Surface
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.layout
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -102,9 +105,9 @@ fun RunScreen(vm: SessionViewModel, ui: Ui, open: (String) -> Unit) {
     val a by animateFloatAsState(if (visible) 1f else 0f, tween(if (visible) 350 else 700), label = "chrome")
     val fade = Modifier.graphicsLayer { alpha = a; scaleX = .94f + .06f * a; scaleY = .94f + .06f * a }
 
-    // gesture hint, shown once
-    LaunchedEffect(Unit) { if (!vm.hintSeen.value) { delay(7000); vm.hintDone() } }
-    val hintA by animateFloatAsState(if (vm.hintSeen.value) 0f else 1f, tween(800), label = "hint")
+    // gesture hint: shown for the first 3 sessions; closes after 9 s or on any touch
+    LaunchedEffect(Unit) { vm.maybeShowHint(); if (vm.hintVisible.value) { delay(9000); vm.hideHint() } }
+    LaunchedEffect(touch) { if (touch > 0) vm.hideHint() }
 
     val rotation = LocalView.current.display?.rotation ?: Surface.ROTATION_90
     val cur = if (run.finished) run.plan.size else run.idx
@@ -133,7 +136,7 @@ fun RunScreen(vm: SessionViewModel, ui: Ui, open: (String) -> Unit) {
                 Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp).then(fade)) {
                     PlanBar(run.plan, cur, Modifier.fillMaxWidth(), gap = 6.dp, breakColor = cs.secondaryContainer)
                 }
-                CenterBlock(run, b, vm, false, hintA, Modifier.weight(1f).fillMaxWidth())
+                CenterBlock(run, b, vm, false, Modifier.weight(1f).fillMaxWidth())
                 if (!run.finished) {
                     Box(fade) { Controls(run.running, vm, vertical = false) }
                     Spacer(Modifier.height(8.dp))
@@ -143,42 +146,57 @@ fun RunScreen(vm: SessionViewModel, ui: Ui, open: (String) -> Unit) {
             // ---------- landscape: same pieces turned onto the sides; the timer stays centred ----------
             val barFirst = rotation != Surface.ROTATION_270   // phone turned clockwise: swap sides
             val barGroup: @Composable () -> Unit = {
-                Column(Modifier.fillMaxHeight().then(fade), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Column(Modifier.fillMaxHeight().width(96.dp).then(fade), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                     PlanBar(run.plan, cur, Modifier.fillMaxHeight(.62f), vertical = true, gap = 6.dp, breakColor = cs.secondaryContainer)
                 }
             }
             val controlGroup: @Composable () -> Unit = {
                 if (!run.finished) {
-                    Column(Modifier.fillMaxHeight().then(fade), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    Column(Modifier.fillMaxHeight().width(96.dp).then(fade), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                         Controls(run.running, vm, vertical = true)
                     }
-                } else Spacer(Modifier.width(40.dp))
+                } else Spacer(Modifier.width(96.dp))
             }
             Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (barFirst) barGroup() else controlGroup()
-                CenterBlock(run, b, vm, true, hintA, Modifier.weight(1f).fillMaxHeight())
+                CenterBlock(run, b, vm, true, Modifier.weight(1f).fillMaxHeight())
                 if (barFirst) controlGroup() else barGroup()
             }
         }
+        AnimatedVisibility(
+            visible = vm.hintVisible.value, enter = fadeIn(tween(500)), exit = fadeOut(tween(500)),
+            modifier = Modifier.align(if (maxWidth > maxHeight) Alignment.Center else Alignment.BottomCenter)
+                .padding(bottom = if (maxWidth > maxHeight) 0.dp else 150.dp),
+        ) { HintCard() }
         // while the controls are hidden, the first tap only brings them back
         if (!visible) Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { visible = true; touch++ } })
     }
 }
 
+@Composable
+fun HintCard() {
+    val cs = MaterialTheme.colorScheme
+    Column(
+        Modifier.clip(RoundedCornerShape(20.dp)).background(cs.surfaceContainer.copy(alpha = .96f)).padding(horizontal = 22.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("Swipe anywhere", fontWeight = FontWeight.SemiBold, color = cs.primary, fontSize = 13.sp)
+        Text("↑   Timer settings", fontSize = 13.sp)
+        Text("←   Theme", fontSize = 13.sp)
+        Text("→   Sound", fontSize = 13.sp)
+    }
+}
+
 /** Big time + caption on the glow, then the thin progress line and the "Focus 3 of 3 · 30m left" text. */
 @Composable
-fun CenterBlock(run: Run, b: Block, vm: SessionViewModel, landscape: Boolean, hintA: Float, modifier: Modifier) {
+fun CenterBlock(run: Run, b: Block, vm: SessionViewModel, landscape: Boolean, modifier: Modifier) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Box(Modifier.weight(1f).fillMaxWidth()) { TimerFace(run, b, landscape) }
         if (!run.finished) {
             ProgressLine(run, b, Modifier.widthIn(max = 360.dp).fillMaxWidth().padding(horizontal = 4.dp))
             Spacer(Modifier.height(10.dp))
         }
-        Status(run, b, vm, 4.dp)
-        Text(
-            "Swipe  ↑ timer  ·  ← theme  ·  → sound", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 2.dp, bottom = if (landscape) 0.dp else 14.dp).graphicsLayer { alpha = hintA },
-        )
+        Status(run, b, vm, if (landscape) 0.dp else 14.dp)
     }
 }
 
@@ -268,7 +286,7 @@ fun TimerFace(run: Run, b: Block, landscape: Boolean) {
         }
 
         val fs = with(LocalDensity.current) {
-            (if (landscape) minOf(maxHeight * .46f, maxWidth * .24f) else minOf(maxHeight * .20f, maxWidth * .42f)).toSp()
+            (if (landscape) minOf(maxHeight * .52f, maxWidth * .26f) else minOf(maxHeight * .30f, maxWidth * .58f)).toSp()
         }
         Column(
             Modifier.graphicsLayer { scaleX = pulse.value; scaleY = pulse.value; alpha = dim },
@@ -307,10 +325,10 @@ fun TimeGroups(ms: Long, fs: TextUnit, stacked: Boolean) {
 /** Each character animates on its own: a soft 1/5-height slide + fade, so only changing digits move. */
 @Composable
 fun DigitRow(g: String, size: TextUnit, gi: Int) {
-    Row {
+    Row(Modifier.tightHeight(.82f)) {
         g.forEachIndexed { i, ch ->
             key(gi * 10 + i) {
-                val slot = with(LocalDensity.current) { (size * 0.66f).toDp() }
+                val slot = with(LocalDensity.current) { (size * 0.62f).toDp() }
                 Box(Modifier.width(slot), contentAlignment = Alignment.Center) {
                     AnimatedContent(
                         targetState = ch, label = "digit$gi$i",
@@ -356,4 +374,11 @@ fun Controls(running: Boolean, vm: SessionViewModel, vertical: Boolean) {
             verticalAlignment = Alignment.CenterVertically,
         ) { content() }
     }
+}
+
+/** Reports a smaller height than the content really has, so stacked rows sit closer without clipping the glyphs. */
+fun Modifier.tightHeight(factor: Float) = layout { measurable, constraints ->
+    val p = measurable.measure(constraints)
+    val h = (p.height * factor).toInt()
+    layout(p.width, h) { p.placeRelative(0, (h - p.height) / 2) }
 }
