@@ -56,6 +56,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -148,16 +149,16 @@ fun RunScreen(vm: SessionViewModel, ui: Ui, open: (String) -> Unit) {
             // ---------- landscape: same pieces turned onto the sides; the timer stays centred ----------
             val barFirst = rotation != Surface.ROTATION_270   // phone turned clockwise: swap sides
             val barGroup: @Composable () -> Unit = {
-                Column(Modifier.fillMaxHeight().width(96.dp).then(fade), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Column(Modifier.fillMaxHeight().width(88.dp).then(fade), horizontalAlignment = Alignment.Start, verticalArrangement = Arrangement.Center) {
                     PlanBar(run.plan, cur, Modifier.fillMaxHeight(.72f), vertical = true, gap = 6.dp, breakColor = cs.secondaryContainer)
                 }
             }
             val controlGroup: @Composable () -> Unit = {
                 if (!run.finished) {
-                    Column(Modifier.fillMaxHeight().width(96.dp).then(fade), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    Column(Modifier.fillMaxHeight().width(88.dp).then(fade), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.Center) {
                         Controls(run.running, vm, vertical = true)
                     }
-                } else Spacer(Modifier.width(96.dp))
+                } else Spacer(Modifier.width(88.dp))
             }
             Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (barFirst) barGroup() else controlGroup()
@@ -327,13 +328,14 @@ fun TimeGroups(ms: Long, fs: TextUnit, stacked: Boolean) {
 /** Each character animates on its own: a soft 1/5-height slide + fade, so only changing digits move. */
 @Composable
 fun DigitRow(g: String, size: TextUnit, gi: Int) {
-    Row(Modifier.tightHeight(.82f)) {
+    val dens = LocalDensity.current
+    val slotW = with(dens) { (size * 0.64f).toDp() }
+    // Row pitch 0.9 em: a digit is ~0.7 em tall, so ~0.2 em of air between stacked rows.
+    val slotH = with(dens) { (size * 0.9f).toDp() }
+    Row {
         g.forEachIndexed { i, ch ->
             key(gi * 10 + i) {
-                // A fixed-size slot per digit, with the digit centred in it. The slot never changes size, so a wider digit
-                // (like "4") is never cropped and nothing drifts sideways while it slides in.
-                val slotW = with(LocalDensity.current) { (size * 0.62f).toDp() }
-                val slotH = with(LocalDensity.current) { size.toDp() }
+                // Fixed-size slot, digit centred in it and free to overflow it (never clipped, never drifting sideways).
                 Box(Modifier.size(slotW, slotH), contentAlignment = Alignment.Center) {
                     AnimatedContent(
                         targetState = ch, modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center,
@@ -347,7 +349,8 @@ fun DigitRow(g: String, size: TextUnit, gi: Int) {
                         Text(
                             c.toString(), fontSize = size, fontFamily = Poppins, fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary,
-                            style = TextStyle(lineHeight = size),
+                            softWrap = false, maxLines = 1, overflow = TextOverflow.Visible,
+                            modifier = Modifier.wrapContentSize(Alignment.Center, unbounded = true),
                         )
                     }
                 }

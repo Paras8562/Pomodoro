@@ -78,7 +78,9 @@ fun App(vm: SessionViewModel) {
             val t = base.getTop(density)
             val bt = base.getBottom(density)
             val sym = landscape && ui.inRun
-            val side = max(l, r)
+            // in immersive mode only the camera cut-out really blocks content, so only that is kept (equal on both sides)
+            val cut = WindowInsets.displayCutout
+            val side = max(cut.getLeft(density, dir), cut.getRight(density, dir))
             val vert = max(t, bt)
             val glide = tween<Dp>(450)
             val padL by animateDpAsState(with(density) { (if (sym) side else l).toDp() }, glide, label = "padL")
@@ -88,7 +90,7 @@ fun App(vm: SessionViewModel) {
             Box(Modifier.fillMaxSize().padding(start = padL, end = padR, top = padT, bottom = padB), contentAlignment = Alignment.TopCenter) {
                 Box(
                     Modifier.widthIn(max = if (landscape) 1000.dp else 480.dp).fillMaxSize().padding(
-                        start = 24.dp, end = 24.dp,
+                        start = if (sym) 12.dp else 24.dp, end = if (sym) 12.dp else 24.dp,
                         top = if (sym) 10.dp else if (landscape) 8.dp else 16.dp,
                         bottom = if (sym) 10.dp else if (landscape) 12.dp else 24.dp,
                     )
