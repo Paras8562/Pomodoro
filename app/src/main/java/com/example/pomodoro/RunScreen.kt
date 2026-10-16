@@ -3,6 +3,8 @@ package com.example.pomodoro
 import android.os.Build
 import android.view.Surface
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.layout
@@ -328,13 +330,18 @@ fun DigitRow(g: String, size: TextUnit, gi: Int) {
     Row(Modifier.tightHeight(.82f)) {
         g.forEachIndexed { i, ch ->
             key(gi * 10 + i) {
-                val slot = with(LocalDensity.current) { (size * 0.62f).toDp() }
-                Box(Modifier.width(slot), contentAlignment = Alignment.Center) {
+                // A fixed-size slot per digit, with the digit centred in it. The slot never changes size, so a wider digit
+                // (like "4") is never cropped and nothing drifts sideways while it slides in.
+                val slotW = with(LocalDensity.current) { (size * 0.62f).toDp() }
+                val slotH = with(LocalDensity.current) { size.toDp() }
+                Box(Modifier.size(slotW, slotH), contentAlignment = Alignment.Center) {
                     AnimatedContent(
-                        targetState = ch, label = "digit$gi$i",
+                        targetState = ch, modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center,
+                        label = "digit$gi$i",
                         transitionSpec = {
-                            (slideInVertically(tween(220)) { it / 5 } + fadeIn(tween(220))) togetherWith
-                                (slideOutVertically(tween(220)) { -it / 5 } + fadeOut(tween(120)))
+                            ((slideInVertically(tween(220)) { it / 5 } + fadeIn(tween(220))) togetherWith
+                                (slideOutVertically(tween(220)) { -it / 5 } + fadeOut(tween(120))))
+                                .using(SizeTransform(clip = false) { _, _ -> snap() })
                         },
                     ) { c ->
                         Text(
