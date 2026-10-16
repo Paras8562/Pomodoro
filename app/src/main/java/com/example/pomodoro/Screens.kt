@@ -164,7 +164,7 @@ fun PlanBar(
                     val (a, sc) = segAnim(i, cur)
                     val flat = breakColor != null && b.kind != Kind.FOCUS
                     Box(
-                        Modifier.weight(b.mins.toFloat()).fillMaxWidth()
+                        Modifier.weight(b.ms.toFloat()).fillMaxWidth()
                             .graphicsLayer { alpha = if (flat) 1f else a.value; scaleX = sc.value }
                             .background(colorOf(b), RoundedCornerShape(50))
                     )
@@ -176,7 +176,7 @@ fun PlanBar(
                     val (a, sc) = segAnim(i, cur)
                     val flat = breakColor != null && b.kind != Kind.FOCUS
                     Box(
-                        Modifier.weight(b.mins.toFloat()).fillMaxHeight()
+                        Modifier.weight(b.ms.toFloat()).fillMaxHeight()
                             .graphicsLayer { alpha = if (flat) 1f else a.value; scaleY = sc.value }
                             .background(colorOf(b), RoundedCornerShape(50))
                     )
@@ -341,6 +341,16 @@ fun PlanBody(vm: SessionViewModel, o: Opts) {
     if (o.useLong) {
         SliderRow("Long break length", "${o.l} min", o.l, 5, 60, 5) { v -> vm.setOpts { it.copy(l = v) } }
         SliderRow("Long break after", "${o.every} focus sessions", o.every, 2, 8, 1) { v -> vm.setOpts { it.copy(every = v) } }
+    }
+    Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(end = 16.dp)) {
+            Text("Flow mode", fontWeight = FontWeight.Medium)
+            Text(
+                "Keep working past the timer. It counts up quietly until you tap “Take a break” – then the break is sized to how long you worked, and the rest of the plan shrinks so you still finish on time.",
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = o.flow, onCheckedChange = { v -> vm.setOpts { it.copy(flow = v) } })
     }
 }
 

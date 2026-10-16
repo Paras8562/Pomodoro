@@ -4,36 +4,68 @@ import kotlin.math.min
 
 enum class Kind { FOCUS, SHORT, LONG }
 
-data class Block(val kind: Kind, val mins: Int) {
-    val ms: Long get() = mins * 60_000L
+/** One stretch of the session. Length is kept in milliseconds so the plan can be re-planned to the second. */
+data class Block(val kind: Kind, val ms: Long) {
+    val mins: Int get() = (ms / 60_000L).toInt()
 }
+
+private fun blk(k: Kind, mins: Int) = Block(k, mins * 60_000L)
 
 data class Opts(
     val total: Int = 120, val brk: Boolean? = null,
     val f: Int = 25, val s: Int = 5, val l: Int = 15,
     val useLong: Boolean = true, val every: Int = 4,
+    val flow: Boolean = false,
 )
 data class Look(val mode: String = "system", val pal: String = "you")
 data class Snd(val tick: String = "soft", val cues: Boolean = true, val vol: Int = 70)
 
+const val MIN_FOCUS_MS = 5 * 60_000L   // a focus block (or the tail of one) shorter than this isn't worth starting
+const val MIN_BREAK_MS = 60_000L       // time lost while away can shorten a break, but never below this
+
 /** Fills the work time with focus blocks and breaks; a long break follows every Nth focus block. */
 fun buildPlan(o: Opts, forceBreaks: Boolean = false): List<Block> {
-    if (o.brk != true && !forceBreaks) return listOf(Block(Kind.FOCUS, o.total))
+    if (o.brk != true && !forceBreaks) return listOf(blk(Kind.FOCUS, o.total))
     val p = mutableListOf<Block>()
     var left = o.total
     var n = 0
     while (left > 0) {
         val f = min(o.f, left)
-        p += Block(Kind.FOCUS, f); left -= f; n++
+        p += blk(Kind.FOCUS, f); left -= f; n++
         if (left <= 0) break
         val long = o.useLong && n % o.every == 0
         val b = if (long) o.l else o.s
         if (left < b + 5) { // no room for a break plus useful focus: extend the last focus block
-            p[p.lastIndex] = p.last().copy(mins = p.last().mins + left); break
+            p[p.lastIndex] = p.last().copy(ms = p.last().ms + left * 60_000L); break
         }
-        p += Block(if (long) Kind.LONG else Kind.SHORT, b); left -= b
+        p += blk(if (long) Kind.LONG else Kind.SHORT, b); left -= b
     }
     return p
+}
+
+/**
+ * Flow mode: the person worked past the planned end and now takes a break. Re-plans the rest of the session so it
+ * still ends on time: a break first (of [firstBreakMs]), then focus / break blocks until [availMs] is used up.
+ * [focusDone] = focus blocks finished so far (decides whether the break is short or long).
+ */
+fun replanFuture(o: Opts, availMs: Long, focusDone: Int, firstBreakMs: Long): List<Block> {
+    val out = mutableListOf<Block>()
+    var left = availMs
+    var n = focusDone
+    if (left <= 0L) return out
+    val kind0 = if (o.useLong && n % o.every == 0) Kind.LONG else Kind.SHORT
+    if (left < firstBreakMs + MIN_FOCUS_MS) { out += Block(kind0, left); return out }   // the rest of the session is the break
+    out += Block(kind0, firstBreakMs); left -= firstBreakMs
+    while (left > 0L) {
+        val f = min(o.f * 60_000L, left)
+        out += Block(Kind.FOCUS, f); left -= f; n++
+        if (left <= 0L) break
+        val long = o.useLong && n % o.every == 0
+        val b = (if (long) o.l else o.s) * 60_000L
+        if (left < b + MIN_FOCUS_MS) { out[out.lastIndex] = out.last().copy(ms = out.last().ms + left); break }
+        out += Block(if (long) Kind.LONG else Kind.SHORT, b); left -= b
+    }
+    return out
 }
 
 fun fmt(m: Int): String {

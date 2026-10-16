@@ -73,7 +73,7 @@ import kotlinx.coroutines.launch
 fun Status(run: Run, b: Block, vm: SessionViewModel, bottom: Dp) {
     val cs = MaterialTheme.colorScheme
     if (run.finished) {
-        val focus = run.plan.filter { it.kind == Kind.FOCUS }.sumOf { it.mins }
+        val focus = (run.plan.filter { it.kind == Kind.FOCUS }.sumOf { it.ms } / 60_000L).toInt()
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(bottom = bottom)) {
             Text("Session complete", style = MaterialTheme.typography.titleLarge)
             Text("You focused for ${fmt(focus)}.", color = cs.onSurfaceVariant)
@@ -83,12 +83,12 @@ fun Status(run: Run, b: Block, vm: SessionViewModel, bottom: Dp) {
         val fc = run.plan.count { it.kind == Kind.FOCUS }
         val fi = run.plan.take(run.idx + 1).count { it.kind == Kind.FOCUS }
         val label = when (b.kind) {
-            Kind.FOCUS -> if (fc > 1) "Focus $fi of $fc" else "Focus"
+            Kind.FOCUS -> (if (fc > 1) "Focus $fi of $fc" else "Focus") + (if (run.overtime) " · +${fmt(max(1, (run.overMs / 60000).toInt()))}" else "")
             Kind.SHORT -> "Short break"
             Kind.LONG -> "Long break"
         }
         val later = run.plan.drop(run.idx + 1).sumOf { it.ms }
-        val leftMin = max(1, ceil((run.remaining + later) / 60000.0).toInt())
+        val leftMin = max(1, ceil(max(0L, run.remaining + later - run.overMs) / 60000.0).toInt())
         Text("$label · ${fmt(leftMin)} left", fontSize = 14.sp, color = cs.primary, modifier = Modifier.padding(bottom = bottom))
     }
 }
@@ -194,7 +194,7 @@ fun HintCard() {
 @Composable
 fun CenterBlock(run: Run, b: Block, vm: SessionViewModel, landscape: Boolean, modifier: Modifier) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.weight(1f).fillMaxWidth()) { TimerFace(run, b, landscape) }
+        Box(Modifier.weight(1f).fillMaxWidth()) { TimerFace(run, b, landscape, vm::takeBreak) }
         if (!run.finished) {
             ProgressLine(run, b, Modifier.widthIn(max = 360.dp).fillMaxWidth().padding(horizontal = 4.dp))
             Spacer(Modifier.height(10.dp))
@@ -226,7 +226,7 @@ fun ProgressLine(run: Run, b: Block, modifier: Modifier) {
 }
 
 @Composable
-fun TimerFace(run: Run, b: Block, landscape: Boolean) {
+fun TimerFace(run: Run, b: Block, landscape: Boolean, onBreak: () -> Unit) {
     val cs = MaterialTheme.colorScheme
     val glow = LocalGlow.current
     val running = run.running
@@ -295,21 +295,25 @@ fun TimerFace(run: Run, b: Block, landscape: Boolean) {
             Modifier.graphicsLayer { scaleX = pulse.value; scaleY = pulse.value; alpha = dim },
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            TimeGroups(run.remaining, fs, stacked = !landscape)
+            TimeGroups(if (run.overtime) run.overMs else run.remaining, fs, stacked = !landscape, up = run.overtime)
             Crossfade(
-                targetState = if (run.finished) "All Done" else when (b.kind) {
+                targetState = if (run.finished) "All Done" else if (run.overtime) "Ready to take a break?" else when (b.kind) {
                     Kind.FOCUS -> "Stay Focused"; Kind.SHORT -> "Take a Breather"; Kind.LONG -> "You Earned It"
                 },
                 label = "caption",
             ) { Text(it, style = MaterialTheme.typography.titleMedium, color = cs.primary) }
+            if (run.overtime) {
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = onBreak) { Text("Take a break") }
+            }
         }
     }
 }
 
 /** Bold digits: minutes over seconds in portrait, side by side in landscape (hours get their own group). */
 @Composable
-fun TimeGroups(ms: Long, fs: TextUnit, stacked: Boolean) {
-    val secs = (ms + 999) / 1000
+fun TimeGroups(ms: Long, fs: TextUnit, stacked: Boolean, up: Boolean = false) {
+    val secs = if (up) ms / 1000 else (ms + 999) / 1000
     val h = secs / 3600
     val m = secs % 3600 / 60
     val s = secs % 60
