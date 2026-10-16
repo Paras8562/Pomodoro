@@ -150,13 +150,13 @@ fun RunScreen(vm: SessionViewModel, ui: Ui, open: (String) -> Unit) {
             val barFirst = rotation != Surface.ROTATION_270   // phone turned clockwise: swap sides
             val barGroup: @Composable () -> Unit = {
                 Column(Modifier.fillMaxHeight().width(88.dp).then(fade), horizontalAlignment = Alignment.Start, verticalArrangement = Arrangement.Center) {
-                    PlanBar(run.plan, cur, Modifier.fillMaxHeight(.72f), vertical = true, gap = 6.dp, breakColor = cs.secondaryContainer)
+                    PlanBar(run.plan, cur, Modifier.fillMaxHeight(.72f), vertical = true, gap = 6.dp, breakColor = cs.secondaryContainer, reverse = barFirst)
                 }
             }
             val controlGroup: @Composable () -> Unit = {
                 if (!run.finished) {
                     Column(Modifier.fillMaxHeight().width(88.dp).then(fade), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.Center) {
-                        Controls(run.running, vm, vertical = true)
+                        Controls(run.running, vm, vertical = true, reverse = barFirst)
                     }
                 } else Spacer(Modifier.width(88.dp))
             }
@@ -364,11 +364,13 @@ fun DigitRow(g: String, size: TextUnit, gi: Int) {
 }
 
 @Composable
-fun Controls(running: Boolean, vm: SessionViewModel, vertical: Boolean) {
+fun Controls(running: Boolean, vm: SessionViewModel, vertical: Boolean, reverse: Boolean = false) {
     // Play button morphs from a pill to a squarer shape while running.
     val corner by animateDpAsState(if (running) 28.dp else 44.dp, spring(dampingRatio = .7f, stiffness = 400f), label = "corner")
-    val content: @Composable () -> Unit = {
+    val restart: @Composable () -> Unit = {
         FilledTonalIconButton(onClick = vm::reset, modifier = Modifier.size(64.dp), colors = tintedButtonColors()) { Icon(Icons.Rounded.Refresh, "Restart block") }
+    }
+    val playPause: @Composable () -> Unit = {
         FilledIconButton(
             onClick = vm::toggle,
             modifier = if (vertical) Modifier.size(88.dp, 120.dp) else Modifier.size(120.dp, 88.dp),
@@ -378,15 +380,18 @@ fun Controls(running: Boolean, vm: SessionViewModel, vertical: Boolean) {
                 Icon(if (it) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (it) "Pause" else "Start", Modifier.size(40.dp))
             }
         }
+    }
+    val next: @Composable () -> Unit = {
         FilledTonalIconButton(onClick = vm::skip, modifier = Modifier.size(64.dp), colors = tintedButtonColors()) { Icon(Icons.Rounded.SkipNext, "Next block") }
     }
+    val buttons = listOf(restart, playPause, next).let { if (reverse) it.asReversed() else it }
     if (vertical) {
-        Column(verticalArrangement = Arrangement.spacedBy(16.dp), horizontalAlignment = Alignment.CenterHorizontally) { content() }
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp), horizontalAlignment = Alignment.CenterHorizontally) { buttons.forEach { it() } }
     } else {
         Row(
             Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically,
-        ) { content() }
+        ) { buttons.forEach { it() } }
     }
 }
 

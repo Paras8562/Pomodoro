@@ -5,7 +5,9 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalContext
@@ -150,7 +152,7 @@ private fun segAnim(i: Int, cur: Int?): Pair<State<Float>, State<Float>> {
 @Composable
 fun PlanBar(
     plan: List<Block>, cur: Int?, modifier: Modifier = Modifier, height: Dp = 12.dp,
-    vertical: Boolean = false, gap: Dp = 2.dp, breakColor: Color? = null,
+    vertical: Boolean = false, gap: Dp = 2.dp, breakColor: Color? = null, reverse: Boolean = false,
 ) {
     BoxWithConstraints(modifier.then(if (vertical) Modifier.width(height) else Modifier.height(height))) {
         val len = if (vertical) maxHeight else maxWidth
@@ -160,7 +162,8 @@ fun PlanBar(
 
         if (vertical) {
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(g), horizontalAlignment = Alignment.CenterHorizontally) {
-                plan.forEachIndexed { i, b ->
+                (if (reverse) plan.indices.reversed() else plan.indices.toList()).forEach { i ->
+                    val b = plan[i]
                     val (a, sc) = segAnim(i, cur)
                     val flat = breakColor != null && b.kind != Kind.FOCUS
                     Box(
@@ -267,7 +270,7 @@ fun StepPart(step: Int, part: Int, vm: SessionViewModel, o: Opts, land: Boolean)
             Spacer(Modifier.height(12.dp))
             ChoiceCard("Yes, plan breaks", "Short breaks, and long breaks if you want them. You choose the lengths.", o.brk == true) { vm.setOpts { it.copy(brk = true) } }
         }
-        else -> if (part == 0) PlanHead(o, land) else PlanBody(vm, o)
+        else -> if (part == 0) PlanHead(vm, o, land) else PlanBody(vm, o)
     }
 }
 
@@ -307,50 +310,94 @@ fun SliderRow(label: String, valueText: String, value: Int, min: Int, max: Int, 
     )
 }
 
+/** Heading + the Flow State card, the star of the app. */
 @Composable
-fun PlanHead(o: Opts, land: Boolean) {
+fun PlanHead(vm: SessionViewModel, o: Opts, land: Boolean) {
+    Title("Plan your session", "Pick your rhythm, or let Flow State find it.", land)
+    FlowCard(vm, o)
+    Spacer(Modifier.height(16.dp))
+}
+
+@Composable
+fun FlowCard(vm: SessionViewModel, o: Opts) {
+    val cs = MaterialTheme.colorScheme
+    val glow = LocalGlow.current
+    val shape = RoundedCornerShape(24.dp)
+    val on = o.flow
+    val wash = if (on) .38f else .14f
+    Column(
+        Modifier.fillMaxWidth().clip(shape)
+            .background(Brush.verticalGradient(listOf(glow.g1.copy(alpha = wash), glow.g2.copy(alpha = wash))))
+            .border(if (on) 2.dp else 1.dp, if (on) cs.primary else cs.outline.copy(alpha = .5f), shape)
+            .clickable { vm.setOpts { it.copy(flow = !on) } }
+            .padding(20.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                Text("FLOW STATE", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.5.sp, color = cs.primary)
+                Text("Work until you lose focus", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 2.dp))
+            }
+            Switch(checked = on, onCheckedChange = { v -> vm.setOpts { it.copy(flow = v) } })
+        }
+        Text(
+            "No alarm in the middle of deep focus. Keep going past the timer, then take a break sized to how long you really worked. The rest of the plan adjusts so you still finish on time.",
+            fontSize = 13.sp, lineHeight = 19.sp, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp),
+        )
+        AnimatedVisibility(visible = on) {
+            Text(
+                "e.g. work ${o.f * 2} min → earn a ${o.s * 2} min break",
+                fontSize = 13.sp, fontWeight = FontWeight.Medium, color = cs.primary, modifier = Modifier.padding(top = 10.dp),
+            )
+        }
+    }
+}
+
+/** Plan preview + the rhythm settings, tucked away until you want them. */
+@Composable
+fun PlanBody(vm: SessionViewModel, o: Opts) {
     val cs = MaterialTheme.colorScheme
     val p = buildPlan(o, forceBreaks = true)
     val fm = p.filter { it.kind == Kind.FOCUS }
     val bm = p.filter { it.kind != Kind.FOCUS }
-    Title("Plan your session", "Focus and breaks repeat until your work time is filled.", land)
+    var open by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(cs.surfaceContainer).padding(16.dp)) {
         PlanBar(p, null, Modifier.fillMaxWidth(), 14.dp)
         Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Legend("Focus", kindColor(Kind.FOCUS)); Legend("Short break", kindColor(Kind.SHORT)); Legend("Long break", kindColor(Kind.LONG))
         }
-        val fw = if (fm.size == 1) "block" else "blocks"
-        val bw = if (bm.size == 1) "break" else "breaks"
         Text(
-            "${fm.size} focus $fw (${fmt(fm.sumOf { it.mins })}) and ${bm.size} $bw (${fmt(bm.sumOf { it.mins })}) fill your ${fmt(o.total)}.",
-            fontSize = 14.sp, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp),
+            "${fm.size} focus · ${bm.size} ${if (bm.size == 1) "break" else "breaks"} · ${fmt(o.total)}",
+            fontSize = 14.sp, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp),
         )
     }
-    Spacer(Modifier.height(16.dp))
-}
 
-@Composable
-fun PlanBody(vm: SessionViewModel, o: Opts) {
-    SliderRow("Focus length", "${o.f} min", o.f, 5, 90, 5) { v -> vm.setOpts { it.copy(f = v) } }
-    SliderRow("Short break", "${o.s} min", o.s, 1, 30, 1) { v -> vm.setOpts { it.copy(s = v) } }
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text("Include long breaks", fontWeight = FontWeight.Medium)
-        Switch(checked = o.useLong, onCheckedChange = { v -> vm.setOpts { it.copy(useLong = v) } })
-    }
-    if (o.useLong) {
-        SliderRow("Long break length", "${o.l} min", o.l, 5, 60, 5) { v -> vm.setOpts { it.copy(l = v) } }
-        SliderRow("Long break after", "${o.every} focus sessions", o.every, 2, 8, 1) { v -> vm.setOpts { it.copy(every = v) } }
-    }
-    Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f).padding(end = 16.dp)) {
-            Text("Flow mode", fontWeight = FontWeight.Medium)
+    Row(
+        Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(12.dp)).clickable { open = !open }.padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Rhythm", fontWeight = FontWeight.Medium)
             Text(
-                "Keep working past the timer. It counts up quietly until you tap “Take a break” – then the break is sized to how long you worked, and the rest of the plan shrinks so you still finish on time.",
-                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                "${o.f} min focus · ${o.s} min break" + if (o.useLong) " · ${o.l} min long break every ${o.every}" else "",
+                fontSize = 12.sp, color = cs.onSurfaceVariant,
             )
         }
-        Switch(checked = o.flow, onCheckedChange = { v -> vm.setOpts { it.copy(flow = v) } })
+        TextButton(onClick = { open = !open }) { Text(if (open) "Done" else "Edit") }
+    }
+    AnimatedVisibility(visible = open) {
+        Column {
+            SliderRow("Focus length", "${o.f} min", o.f, 5, 90, 5) { v -> vm.setOpts { it.copy(f = v) } }
+            SliderRow("Short break", "${o.s} min", o.s, 1, 30, 1) { v -> vm.setOpts { it.copy(s = v) } }
+            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Include long breaks", fontWeight = FontWeight.Medium)
+                Switch(checked = o.useLong, onCheckedChange = { v -> vm.setOpts { it.copy(useLong = v) } })
+            }
+            if (o.useLong) {
+                SliderRow("Long break length", "${o.l} min", o.l, 5, 60, 5) { v -> vm.setOpts { it.copy(l = v) } }
+                SliderRow("Long break after", "${o.every} focus sessions", o.every, 2, 8, 1) { v -> vm.setOpts { it.copy(every = v) } }
+            }
+        }
     }
 }
 
