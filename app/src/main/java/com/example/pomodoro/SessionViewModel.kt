@@ -113,8 +113,9 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
             Preset(
                 j.getLong("id"), j.getString("name"),
                 Opts(
-                    total = j.getInt("total"), brk = j.getBoolean("brk"), f = j.getInt("f"), s = j.getInt("s"), l = j.getInt("l"),
-                    useLong = j.getBoolean("useLong"), every = j.getInt("every"), flow = j.optBoolean("flow", false),
+                    total = j.optInt("total", 120), brk = if (j.has("brk")) j.optBoolean("brk", false) else null,
+                    f = j.optInt("f", 25), s = j.optInt("s", 5), l = j.optInt("l", 15),
+                    useLong = j.optBoolean("useLong", true), every = j.optInt("every", 4), flow = j.optBoolean("flow", false),
                 ),
             )
         }
