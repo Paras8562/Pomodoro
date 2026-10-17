@@ -17,6 +17,8 @@ data class Opts(
     val useLong: Boolean = true, val every: Int = 4,
     val flow: Boolean = false,
 )
+/** A saved, labelled setup. */
+data class Preset(val id: Long, val name: String, val opts: Opts)
 data class Look(val mode: String = "system", val pal: String = "you")
 data class Snd(val tick: String = "soft", val cues: Boolean = true, val vol: Int = 70)
 

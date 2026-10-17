@@ -29,6 +29,11 @@ import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToLong
+import androidx.compose.runtime.mutableIntStateOf
+import org.json.JSONArray
+import org.json.JSONObject
+import java.time.LocalDate
+import java.time.LocalDateTime
 
 /** Fast-changing timer state (updates ~10x per second). */
 data class Run(
@@ -59,6 +64,7 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
     private var endAt = 0L
     private var overStart = 0L
     private var lastSec = -1L
+    private var lastTickAt = 0L
     private var tock = false
     private fun now() = SystemClock.elapsedRealtime()
 
@@ -76,6 +82,7 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
         ContextCompat.registerReceiver(app, screenOff, IntentFilter(Intent.ACTION_SCREEN_OFF), ContextCompat.RECEIVER_NOT_EXPORTED)
     }
     override fun onCleared() {
+        flushStats()
         try { getApplication<Application>().unregisterReceiver(screenOff) } catch (_: Exception) {}
         super.onCleared()
     }
@@ -91,6 +98,101 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
     fun hideHint() { hintVisible.value = false }
+
+    // ---------- bottom menu: the timer screen tells the menu whether its controls are showing ----------
+    val chromeVisible = mutableStateOf(true)
+
+    // ---------- presets ----------
+    private val _presets = MutableStateFlow(readPresets())
+    val presets: StateFlow<List<Preset>> = _presets.asStateFlow()
+
+    private fun readPresets(): List<Preset> = try {
+        val a = JSONArray(sp.getString("presets", "[]"))
+        (0 until a.length()).map { i ->
+            val j = a.getJSONObject(i)
+            Preset(
+                j.getLong("id"), j.getString("name"),
+                Opts(
+                    total = j.getInt("total"), brk = j.getBoolean("brk"), f = j.getInt("f"), s = j.getInt("s"), l = j.getInt("l"),
+                    useLong = j.getBoolean("useLong"), every = j.getInt("every"), flow = j.optBoolean("flow", false),
+                ),
+            )
+        }
+    } catch (_: Exception) { emptyList() }
+
+    private fun writePresets(list: List<Preset>) {
+        val a = JSONArray()
+        list.forEach { p ->
+            a.put(
+                JSONObject().put("id", p.id).put("name", p.name).put("total", p.opts.total).put("brk", p.opts.brk == true)
+                    .put("f", p.opts.f).put("s", p.opts.s).put("l", p.opts.l).put("useLong", p.opts.useLong)
+                    .put("every", p.opts.every).put("flow", p.opts.flow)
+            )
+        }
+        sp.edit().putString("presets", a.toString()).apply()
+    }
+
+    /** [id] = null creates a new preset. */
+    fun savePreset(id: Long?, name: String, o: Opts) {
+        val p = Preset(id ?: System.currentTimeMillis(), name, o.copy(brk = o.brk == true))
+        val list = _presets.value
+        val i = list.indexOfFirst { it.id == p.id }
+        val next = if (i >= 0) list.toMutableList().also { it[i] = p } else list + p
+        _presets.value = next
+        writePresets(next)
+    }
+
+    fun deletePreset(id: Long) {
+        val next = _presets.value.filter { it.id != id }
+        _presets.value = next
+        writePresets(next)
+    }
+
+    /** Loads the preset's settings and builds a fresh session from it (ready to press play). */
+    fun startPreset(p: Preset) {
+        _ui.update { it.copy(opts = p.opts) }
+        saveOpts(p.opts)
+        create()
+    }
+
+    fun hasActiveSession(): Boolean {
+        val r = _run.value
+        return r.plan.isNotEmpty() && !r.finished && (r.running || r.overtime || r.idx > 0 || r.remaining < r.plan[0].ms)
+    }
+
+    // ---------- focus stats: focus milliseconds per day, split into 24 hourly buckets ----------
+    private val statsSp = app.getSharedPreferences("pomo_stats", Context.MODE_PRIVATE)
+    private val statsCache = HashMap<String, LongArray>()
+    private val statsDirty = HashSet<String>()
+    private var lastFlush = 0L
+    /** Changes whenever new focus time has been saved, so the stats screen can refresh. */
+    val statsVersion = mutableIntStateOf(0)
+
+    private fun dayKey(d: LocalDate) = "d:$d"
+
+    fun focusBuckets(d: LocalDate): LongArray = statsCache.getOrPut(dayKey(d)) {
+        val arr = LongArray(24)
+        statsSp.getString(dayKey(d), null)?.split(",")?.forEachIndexed { i, s -> if (i < 24) arr[i] = s.toLongOrNull() ?: 0L }
+        arr
+    }
+
+    private fun recordFocus(ms: Long) {
+        if (ms <= 0L) return
+        val t = LocalDateTime.now()
+        focusBuckets(t.toLocalDate())[t.hour] += ms
+        statsDirty += dayKey(t.toLocalDate())
+        if (now() - lastFlush > 5_000L) flushStats()
+    }
+
+    fun flushStats() {
+        if (statsDirty.isEmpty()) return
+        val e = statsSp.edit()
+        statsDirty.forEach { k -> statsCache[k]?.let { e.putString(k, it.joinToString(",")) } }
+        e.apply()
+        statsDirty.clear()
+        lastFlush = now()
+        statsVersion.intValue++
+    }
 
     // ---------- persistence ----------
     private fun load() = Ui(
@@ -160,6 +262,7 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
     private fun start() {
         val r = _run.value
         endAt = now() + r.remaining
+        lastTickAt = now()
         if (r.overtime) overStart = now() - r.overMs
         lastSec = if (r.overtime) r.overMs / 1000 else ceil(r.remaining / 1000.0).toLong()
         _run.update { it.copy(running = true) }
@@ -169,12 +272,18 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun stop() {
         job?.cancel()
+        flushStats()
         _run.update { it.copy(running = false) }
     }
 
     private fun tick() {
         val r = _run.value
         val t = now()
+        val dt = max(0L, t - lastTickAt)
+        lastTickAt = t
+        // focus time for the stats: all of it in flow mode, otherwise at most what was left in the focus block
+        if (r.overtime) recordFocus(dt)
+        else if (r.plan.getOrNull(r.idx)?.kind == Kind.FOCUS) recordFocus(min(dt, r.remaining))
 
         // flow mode: the planned focus time is over, keep counting up – silently
         if (r.overtime) {
@@ -215,6 +324,7 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun complete() {
         job?.cancel()
+        flushStats()
         cue("done")
         _run.update { it.copy(running = false, finished = true, remaining = 0, overtime = false, overMs = 0) }
     }
@@ -324,6 +434,7 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
     private val nm get() = getApplication<Application>().getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
     fun appLeft() {
+        flushStats()
         val app = getApplication<Application>()
         val r = _run.value
         val b = r.plan.getOrNull(r.idx)

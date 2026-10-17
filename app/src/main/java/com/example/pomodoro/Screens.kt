@@ -6,6 +6,10 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.animation.core.animateFloatAsState
@@ -47,6 +51,7 @@ fun App(vm: SessionViewModel) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val running by vm.running.collectAsStateWithLifecycle()
     var sheet by remember { mutableStateOf<String?>(null) }
+    var tab by rememberSaveable { mutableIntStateOf(0) }   // 0 timer · 1 presets · 2 stats
     val ctx = LocalContext.current
     val density = LocalDensity.current
     val dir = LocalLayoutDirection.current
@@ -79,7 +84,10 @@ fun App(vm: SessionViewModel) {
             val r = base.getRight(density, dir)
             val t = base.getTop(density)
             val bt = base.getBottom(density)
-            val sym = landscape && ui.inRun
+            val onRun = tab == 0 && ui.inRun
+            val sym = landscape && onRun
+            // the bottom menu stays out of the way on the running timer: it fades with the controls in portrait, and is hidden in landscape
+            val barVisible = when { !onRun -> true; landscape -> false; else -> vm.chromeVisible.value }
             // in immersive mode only the camera cut-out really blocks content, so only that is kept (equal on both sides)
             val cut = WindowInsets.displayCutout
             val side = max(cut.getLeft(density, dir), cut.getRight(density, dir))
@@ -89,16 +97,30 @@ fun App(vm: SessionViewModel) {
             val padR by animateDpAsState(with(density) { (if (sym) side else r).toDp() }, glide, label = "padR")
             val padT by animateDpAsState(with(density) { (if (sym) vert else if (landscape) 0 else t).toDp() }, glide, label = "padT")
             val padB by animateDpAsState(with(density) { (if (sym) vert else bt).toDp() }, glide, label = "padB")
-            Box(Modifier.fillMaxSize().padding(start = padL, end = padR, top = padT, bottom = padB), contentAlignment = Alignment.TopCenter) {
-                Box(
-                    Modifier.widthIn(max = if (landscape) 1000.dp else 480.dp).fillMaxSize().padding(
-                        start = if (sym) 12.dp else 24.dp, end = if (sym) 12.dp else 24.dp,
-                        top = if (sym) 10.dp else if (landscape) 8.dp else 16.dp,
-                        bottom = if (sym) 10.dp else if (landscape) 12.dp else 24.dp,
-                    )
-                ) {
-                    if (ui.inRun) RunScreen(vm, ui) { sheet = it } else SetupScreen(vm, ui) { sheet = it }
+            val innerBottom by animateDpAsState(
+                if (sym) 10.dp else if (landscape) 12.dp else if (barVisible) 8.dp else 24.dp, glide, label = "innerBottom",
+            )
+            Column(Modifier.fillMaxSize().padding(start = padL, end = padR, top = padT, bottom = padB)) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+                    Box(
+                        Modifier.widthIn(max = if (landscape) 1000.dp else 480.dp).fillMaxSize().padding(
+                            start = if (sym) 12.dp else 24.dp, end = if (sym) 12.dp else 24.dp,
+                            top = if (sym) 10.dp else if (landscape) 8.dp else 16.dp,
+                            bottom = innerBottom,
+                        )
+                    ) {
+                        when (tab) {
+                            0 -> if (ui.inRun) RunScreen(vm, ui) { sheet = it } else SetupScreen(vm, ui) { sheet = it }
+                            1 -> PresetsScreen(vm, ui) { tab = 0 }
+                            else -> StatsScreen(vm)
+                        }
+                    }
                 }
+                AnimatedVisibility(
+                    visible = barVisible,
+                    enter = expandVertically(tween(300)) + fadeIn(tween(300)),
+                    exit = shrinkVertically(tween(300)) + fadeOut(tween(200)),
+                ) { BottomBar(tab, running, landscape) { tab = it } }
             }
         }
     }
@@ -310,11 +332,24 @@ fun SliderRow(label: String, valueText: String, value: Int, min: Int, max: Int, 
     )
 }
 
-/** Heading + the Flow State card, the star of the app. */
+/** Heading + the plan preview. */
 @Composable
 fun PlanHead(vm: SessionViewModel, o: Opts, land: Boolean) {
+    val cs = MaterialTheme.colorScheme
+    val p = buildPlan(o, forceBreaks = true)
+    val fm = p.filter { it.kind == Kind.FOCUS }
+    val bm = p.filter { it.kind != Kind.FOCUS }
     Title("Plan your session", "Pick your rhythm, or let Flow State find it.", land)
-    FlowCard(vm, o)
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(cs.surfaceContainer).padding(16.dp)) {
+        PlanBar(p, null, Modifier.fillMaxWidth(), 14.dp)
+        Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Legend("Focus", kindColor(Kind.FOCUS)); Legend("Short break", kindColor(Kind.SHORT)); Legend("Long break", kindColor(Kind.LONG))
+        }
+        Text(
+            "${fm.size} focus · ${bm.size} ${if (bm.size == 1) "break" else "breaks"} · ${fmt(o.total)}",
+            fontSize = 14.sp, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp),
+        )
+    }
     Spacer(Modifier.height(16.dp))
 }
 
@@ -340,64 +375,31 @@ fun FlowCard(vm: SessionViewModel, o: Opts) {
             Switch(checked = on, onCheckedChange = { v -> vm.setOpts { it.copy(flow = v) } })
         }
         Text(
-            "No alarm in the middle of deep focus. Keep going past the timer, then take a break sized to how long you really worked. The rest of the plan adjusts so you still finish on time.",
+            "No alarm in the middle of deep focus. The rest of the plan adjusts so you still finish on time.",
             fontSize = 13.sp, lineHeight = 19.sp, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp),
         )
-        AnimatedVisibility(visible = on) {
-            Text(
-                "e.g. work ${o.f * 2} min → earn a ${o.s * 2} min break",
-                fontSize = 13.sp, fontWeight = FontWeight.Medium, color = cs.primary, modifier = Modifier.padding(top = 10.dp),
-            )
-        }
     }
 }
 
-/** Plan preview + the rhythm settings, tucked away until you want them. */
+/** Flow State card, then the timer settings (always visible). */
 @Composable
 fun PlanBody(vm: SessionViewModel, o: Opts) {
-    val cs = MaterialTheme.colorScheme
-    val p = buildPlan(o, forceBreaks = true)
-    val fm = p.filter { it.kind == Kind.FOCUS }
-    val bm = p.filter { it.kind != Kind.FOCUS }
-    var open by remember { mutableStateOf(false) }
-
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(cs.surfaceContainer).padding(16.dp)) {
-        PlanBar(p, null, Modifier.fillMaxWidth(), 14.dp)
-        Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Legend("Focus", kindColor(Kind.FOCUS)); Legend("Short break", kindColor(Kind.SHORT)); Legend("Long break", kindColor(Kind.LONG))
-        }
-        Text(
-            "${fm.size} focus · ${bm.size} ${if (bm.size == 1) "break" else "breaks"} · ${fmt(o.total)}",
-            fontSize = 14.sp, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp),
-        )
+    FlowCard(vm, o)
+    Spacer(Modifier.height(16.dp))
+    SliderRow("Focus length", "${o.f} min", o.f, 5, 90, 5) { v -> vm.setOpts { it.copy(f = v) } }
+    SliderRow("Short break", "${o.s} min", o.s, 1, 30, 1) { v -> vm.setOpts { it.copy(s = v) } }
+    SwitchRow("Include long breaks", o.useLong) { v -> vm.setOpts { it.copy(useLong = v) } }
+    if (o.useLong) {
+        SliderRow("Long break length", "${o.l} min", o.l, 5, 60, 5) { v -> vm.setOpts { it.copy(l = v) } }
+        SliderRow("Long break after", "${o.every} focus sessions", o.every, 2, 8, 1) { v -> vm.setOpts { it.copy(every = v) } }
     }
+}
 
-    Row(
-        Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(12.dp)).clickable { open = !open }.padding(vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text("Rhythm", fontWeight = FontWeight.Medium)
-            Text(
-                "${o.f} min focus · ${o.s} min break" + if (o.useLong) " · ${o.l} min long break every ${o.every}" else "",
-                fontSize = 12.sp, color = cs.onSurfaceVariant,
-            )
-        }
-        TextButton(onClick = { open = !open }) { Text(if (open) "Done" else "Edit") }
-    }
-    AnimatedVisibility(visible = open) {
-        Column {
-            SliderRow("Focus length", "${o.f} min", o.f, 5, 90, 5) { v -> vm.setOpts { it.copy(f = v) } }
-            SliderRow("Short break", "${o.s} min", o.s, 1, 30, 1) { v -> vm.setOpts { it.copy(s = v) } }
-            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("Include long breaks", fontWeight = FontWeight.Medium)
-                Switch(checked = o.useLong, onCheckedChange = { v -> vm.setOpts { it.copy(useLong = v) } })
-            }
-            if (o.useLong) {
-                SliderRow("Long break length", "${o.l} min", o.l, 5, 60, 5) { v -> vm.setOpts { it.copy(l = v) } }
-                SliderRow("Long break after", "${o.every} focus sessions", o.every, 2, 8, 1) { v -> vm.setOpts { it.copy(every = v) } }
-            }
-        }
+@Composable
+fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Text(label, fontWeight = FontWeight.Medium)
+        Switch(checked = checked, onCheckedChange = onChange)
     }
 }
 

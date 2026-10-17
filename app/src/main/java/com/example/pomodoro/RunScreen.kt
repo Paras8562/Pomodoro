@@ -107,6 +107,8 @@ fun RunScreen(vm: SessionViewModel, ui: Ui, open: (String) -> Unit) {
     LaunchedEffect(focusRunning, touch) { if (focusRunning) { delay(4000); visible = false } else visible = true }
     val a by animateFloatAsState(if (visible) 1f else 0f, tween(if (visible) 350 else 700), label = "chrome")
     val fade = Modifier.graphicsLayer { alpha = a; scaleX = .94f + .06f * a; scaleY = .94f + .06f * a }
+    LaunchedEffect(visible) { vm.chromeVisible.value = visible }
+    DisposableEffect(Unit) { onDispose { vm.chromeVisible.value = true } }
 
     // gesture hint: shown for the first 3 sessions; closes after 9 s or on any touch
     LaunchedEffect(Unit) { vm.maybeShowHint(); if (vm.hintVisible.value) { delay(9000); vm.hideHint() } }
